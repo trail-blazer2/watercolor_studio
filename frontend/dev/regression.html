@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Watercolor browser regressions</title>
+<style>
+  body { font: 16px system-ui; max-width: 960px; margin: 2rem auto; padding: 0 1rem; background: #f4f0e8; color: #243b36; }
+  button { font: inherit; padding: .6rem; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+  canvas { max-width: 100%; background: white; }
+</style>
+<h1>Browser rendering regressions</h1>
+<p><a href="../">Studio</a> · <a href="benchmark.html">Benchmarks</a> · <a href="compare.html">Reference comparison</a></p>
+<p>Deterministic synthetic photo and mask: no model download or reference image needed.
+  Exercises the real document, history, GPU compositor, and tiled JPEG encoder.
+  This does not test AI fidelity or phone performance.</p>
+<button id="run">Run browser regressions</button>
+<pre id="results" role="status" aria-live="polite">Not run.</pre>
+<canvas id="preview" aria-label="Regression painting"></canvas>
+<script type="module">
+  import { WatercolorDocument } from "../js/document.js";
+  import { EditHistory } from "../js/state.js";
+  import { applyMaskEdits, decodePhoto, replayParameters } from "../js/editor.js";
+  import { createPainting } from "../js/pipeline/paint.js";
+  import { PaintingCompositor } from "../js/pipeline/compositor.js";
+  import { exportJPG } from "../js/pipeline/export.js";
+
+  const button = document.querySelector("#run");
+  const results = document.querySelector("#results");
+  const preview = document.querySelector("#preview");
+  const surface = (width, height, color) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = width; canvas.height = height;
+    if (color) {
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = color; ctx.fillRect(0, 0, width, height);
+    }
+    return canvas;
+  };
+  const pixels = (canvas) => canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
+  const equal = (a, b) => a.length === b.length && a.every((value, i) => value === b[i]);
+  const assert = (condition, message) => { if (!condition) throw new Error(message); };
+
+  button.onclick = async () => {
+    button.disabled = true;
+    results.dataset.state = "running";
+    results.textContent = "";
+    let painting, compositor;
+    const passed = [];
+    const check = async (name, test) => {
+      await test();
+      passed.push(name);
+      results.textContent = passed.map((name) => `PASS ${name}`).join("\n");
+    };
+    try {
+      await check("Shared photo decoding bounds large images for editor and developer pages", async () => {
+        const source = surface(4096, 2, "#985724");
+        const blob = await new Promise((resolve) => source.toBlob(resolve));
+        const decoded = await decodePhoto(blob);
+        assert(decoded.width === 2048 && decoded.height === 1, "Photo was not bounded to 2048 pixels.");
+        assert(pixels(decoded)[3] === 255, "Decoded canvas lost its pixels.");
+      });
+      await check("GPU stamp orientation and premultiplied alpha", () => {
+        const brush = surface(8, 8, "#fff");
+        compositor = new PaintingCompositor(new Map([["test", brush]]));
+        compositor.resize(32, 32);
+        const gpu = compositor.drawStamps("test", [
+          { x: 8, y: 8, size: 8, color: [1, 0, 0], opacity: .5 },
+        ], 32, 32);
+        const copy = surface(32, 32);
+        copy.getContext("2d").drawImage(gpu, 0, 0);
+        const data = pixels(copy), offset = (8 * 32 + 8) * 4;
+        assert(data[offset] > 250 && Math.abs(data[offset + 3] - 128) <= 1,
+          "Stamp must be red with half alpha at the top-left position.");
+        assert(data[(24 * 32 + 8) * 4 + 3] === 0, "Stamp must not be vertically flipped.");
+        compositor.dispose(); compositor = null;
+      });
+
+      const photo = surface(64, 80, "#985724");
+      const ctx = photo.getContext("2d");
+      ctx.fillStyle = "#f7cc74"; ctx.fillRect(16, 8, 24, 30);
+      const mask = surface(64, 80, "#fff");
+      const doc = new WatercolorDocument({ photo, mask, outputWidth: 160, outputHeight: 224 });
+      const history = new EditHistory(doc);
+      painting = await createPainting(doc);
+      const render = () => {
+        painting.render({ canvas: preview, width: doc.outputWidth, height: doc.outputHeight });
+        return pixels(preview);
+      };
+      const baseline = render().slice();
+      await check("Painting is deterministic across repeated GPU renders", () => {
+        assert(equal(baseline, render()), "Repeated rendering changed pixels.");
+      });
+      await check("Layer parameter undo/redo restores GPU output", () => {
+        history.addStroke({ type: "parameter", layerId: "subject", key: "visible", value: false });
+        replayParameters(doc);
+        const changed = render().slice();
+        assert(!equal(baseline, changed), "Visibility edit did not affect output.");
+        history.undo(); replayParameters(doc);
+        assert(equal(baseline, render()), "Parameter undo did not restore output.");
+        history.redo(); replayParameters(doc);
+        assert(equal(changed, render()), "Parameter redo did not restore output.");
+        history.undo(); replayParameters(doc);
+      });
+      await check("Paint and eraser strokes survive undo/redo and output resizing", () => {
+        const stroke = doc.addStroke({ points: [{ x: .5, y: .5 }], size: 36,
+          color: "#00ff00", layerId: "custom_detail" });
+        history.track(stroke);
+        const painted = render().slice();
+        assert(!equal(baseline, painted), "Paint did not affect its layer.");
+        const eraser = doc.addStroke({ points: [{ x: .5, y: .5 }], size: 50,
+          tool: "erase", layerId: "custom_detail" });
+        history.track(eraser);
+        assert(equal(baseline, render()), "Eraser damaged underlying layers or failed to erase.");
+        history.undo();
+        assert(equal(painted, render()), "Eraser undo did not restore paint.");
+        history.undo();
+        assert(equal(baseline, render()), "Paint undo did not restore output.");
+        history.redo();
+        assert(equal(painted, render()), "Paint redo did not restore output.");
+        doc.resize(320, 448);
+        render();
+        const center = (224 * 320 + 160) * 4;
+        assert(pixels(preview)[center + 1] > 240, "Normalized stroke moved on resize.");
+        history.undo(); doc.resize(160, 224);
+      });
+      await check("Mask rebuild applies partial-opacity edits exactly once, including undo/redo", async () => {
+        const edit = { type: "stroke", tool: "mask-erase", space: "subject", sourceSize: .3,
+          points: [{ x: .5, y: .5 }], opacity: .25, size: .2 };
+        history.addStroke(edit);
+        const rebuild = async () => {
+          applyMaskEdits(doc, mask, painting.imageBounds);
+          painting.dispose();
+          painting = await createPainting(doc);
+          return render().slice();
+        };
+        const changed = await rebuild();
+        const once = new WatercolorDocument({ photo, mask: doc.mask, outputWidth: 160, outputHeight: 224 });
+        const reference = await createPainting(once);
+        try {
+          const expected = surface(160, 224);
+          reference.render({ canvas: expected });
+          assert(equal(changed, pixels(expected)), "Mask edits were applied again by the renderer.");
+        } finally { reference.dispose(); }
+        assert(!equal(baseline, changed), "Mask edit did not affect output.");
+        history.undo();
+        assert(equal(baseline, await rebuild()), "Mask undo did not restore output.");
+        history.redo();
+        assert(equal(changed, await rebuild()), "Mask redo did not restore output.");
+      });
+      await check("Tiled painting matches a whole render", () => {
+        const whole = render().slice(), assembled = surface(160, 224);
+        const target = assembled.getContext("2d");
+        for (let y = 0; y < 224; y += 56) for (let x = 0; x < 160; x += 80) {
+          const tile = surface(80, 56);
+          painting.render({ canvas: tile, width: 80, height: 56, x, y, fullWidth: 160, fullHeight: 224 });
+          target.drawImage(tile, x, y);
+        }
+        const tiled = pixels(assembled);
+        const meanError = whole.reduce((sum, value, i) => sum + Math.abs(value - tiled[i]), 0) / whole.length;
+        assert(meanError < 1, `Tile seams or placement mismatch: mean channel error ${meanError}.`);
+      });
+      await check("Tiled JPEG decodes with requested dimensions", async () => {
+        const blob = await exportJPG({ document: doc, tileSize: 80, margin: 8,
+          renderTile: ({ width, height, x, y, tileWidth, tileHeight, margin }) => painting.render({
+            width: tileWidth + margin * 2, height: tileHeight + margin * 2,
+            x: x - margin, y: y - margin, fullWidth: width, fullHeight: height,
+          }),
+        });
+        const decoded = await createImageBitmap(blob);
+        try {
+          assert(decoded.width === 160 && decoded.height === 224, "JPEG dimensions changed.");
+          assert(blob.type === "image/jpeg", "Export is not a JPEG.");
+        } finally { decoded.close(); }
+      });
+      results.dataset.state = "passed";
+      results.textContent += `\n${passed.length} browser regressions passed.`;
+    } catch (error) {
+      results.dataset.state = "failed";
+      results.textContent += `\nFAIL ${error.stack || error.message}`;
+    } finally {
+      painting?.dispose(); compositor?.dispose();
+      button.disabled = false;
+    }
+  };
+  if (new URLSearchParams(location.search).has("run")) button.click();
+</script>
+</html>

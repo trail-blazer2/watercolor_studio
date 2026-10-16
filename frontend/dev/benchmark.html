@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Watercolor GPU benchmark</title>
+<style>
+  body { font: 16px system-ui; max-width: 960px; margin: 2rem auto; padding: 0 1rem; background: #f4f0e8; color: #243b36; }
+  button, input { font: inherit; margin: .4rem; padding: .6rem; }
+  canvas { width: 100%; max-width: 640px; background: white; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
+<h1>On-device measurements</h1>
+<p><a href="../">Studio</a> · <a href="compare.html">Python reference comparison</a></p>
+<p><a href="regression.html">Browser regression checks (no models required)</a></p>
+<p>Actual elapsed wall time on this browser, not a performance promise. Stamp draws use
+  the application's instanced WebGL2 renderer. A GPU finish is included; these are
+  wall-clock timings, not GPU timer-query results. First run includes shader setup.</p>
+<button id="stress">Run 5,000 + 20,000 stamp stress test</button>
+<p>For pipeline stage timings, upload a photo. This runs local segmentation and the
+  animals painting pipeline; first use may download model/runtime files.</p>
+<input id="photo" type="file" accept="image/*" aria-label="Benchmark photo">
+<button id="pipeline">Measure pipeline</button>
+<pre id="results" role="status" aria-live="polite">No measurements yet. Target-device timing is pending.</pre>
+<canvas id="canvas" width="1024" height="768" aria-label="GPU benchmark result"></canvas>
+<script type="module">
+  import { StampRenderer, createBrushTexture } from "../js/gpu/stamp.js";
+  import { createWebGL2Context } from "../js/gpu/context.js";
+
+  const results = document.querySelector("#results");
+  const canvas = document.querySelector("#canvas");
+  const stress = document.querySelector("#stress");
+  const pipeline = document.querySelector("#pipeline");
+  const report = (value) => { results.textContent = JSON.stringify(value, null, 2); };
+  const ms = (start) => Number((performance.now() - start).toFixed(2));
+  stress.onclick = async () => {
+    stress.disabled = pipeline.disabled = true;
+    let renderer, gl, texture, texturePool;
+    try {
+      const total = performance.now();
+      ({ gl, texturePool } = createWebGL2Context(canvas));
+      renderer = new StampRenderer(gl);
+      const brush = document.createElement("canvas");
+      brush.width = brush.height = 64;
+      const ctx = brush.getContext("2d");
+      const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+      gradient.addColorStop(0, "rgba(255,255,255,.8)");
+      gradient.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, 64, 64);
+      texture = createBrushTexture(gl, brush);
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      const measurements = { userAgent: navigator.userAgent, setupMs: ms(total), batches: [] };
+      for (const count of [5000, 20000]) {
+        const build = performance.now();
+        const stamps = Array.from({ length: count }, (_, i) => ({
+          x: (i * 173) % canvas.width,
+          y: (i * 97) % canvas.height,
+          size: 8 + (i % 40),
+          rotation: (i % 360) * Math.PI / 180,
+          color: [.25, .45 + (i % 20) / 100, .55],
+          opacity: .08,
+        }));
+        const generationMs = ms(build);
+        gl.clearColor(1, 1, 1, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.finish();
+        const start = performance.now();
+        const drawn = renderer.drawLayer({ texture, stamps, width: canvas.width, height: canvas.height });
+        gl.finish();
+        const drawAndFinishMs = ms(start);
+        const error = gl.getError();
+        if (error !== gl.NO_ERROR) throw new Error(`WebGL error ${error}`);
+        measurements.batches.push({ requested: count, drawn, generationMs, drawAndFinishMs });
+      }
+      report(measurements);
+    } catch (error) {
+      results.textContent = `Benchmark failed: ${error.message}`;
+    } finally {
+      renderer?.dispose();
+      if (texture) gl.deleteTexture(texture);
+      texturePool?.dispose();
+      stress.disabled = pipeline.disabled = false;
+    }
+  };
+  pipeline.onclick = async () => {
+    const file = document.querySelector("#photo").files[0];
+    if (!file) { results.textContent = "Choose a photo first."; return; }
+    stress.disabled = pipeline.disabled = true;
+    results.textContent = "Loading pipeline…";
+    let photo, painting;
+    try {
+      const { WatercolorDocument } = await import("../js/document.js");
+      const { decodePhoto } = await import("../js/editor.js");
+      const { segmentPhoto } = await import("../js/pipeline/segment.js");
+      const { createPainting } = await import("../js/pipeline/paint.js");
+      const timings = { userAgent: navigator.userAgent };
+      const total = performance.now();
+      let start = performance.now();
+      photo = await decodePhoto(file);
+      timings.decodeMs = ms(start);
+      start = performance.now();
+      const mask = await segmentPhoto(photo);
+      timings.initialSegmentationMs = ms(start);
+      const doc = new WatercolorDocument({ photo, mask, preset: "animals" });
+      start = performance.now();
+      const stageTimings = [];
+      let previousStage = "initialization";
+      let previousTime = start;
+      painting = await createPainting(doc, {
+        onProgress: ({ stage }) => {
+          if (!stage || stage === previousStage) return;
+          const now = performance.now();
+          stageTimings.push({ stage: previousStage, wallMs: Number((now - previousTime).toFixed(2)) });
+          previousStage = stage;
+          previousTime = now;
+        },
+      });
+      stageTimings.push({ stage: previousStage, wallMs: ms(previousTime) });
+      timings.paintingMs = ms(start);
+      start = performance.now();
+      const preview = document.createElement("canvas");
+      const scale = Math.min(1, 1024 / Math.max(doc.outputWidth, doc.outputHeight));
+      const width = Math.round(doc.outputWidth * scale);
+      const height = Math.round(doc.outputHeight * scale);
+      await painting.render({ canvas: preview, width, height, fullWidth: width, fullHeight: height });
+      timings.previewRenderMs = ms(start);
+      timings.totalMs = ms(total);
+      timings.stages = painting.timings ?? doc.timings ?? "No stage timings returned.";
+      timings.progressStageWallTimes = stageTimings;
+      timings.note = "Initial small-model mask measured; full-model upgrade continues in the background.";
+      report(timings);
+    } catch (error) {
+      results.textContent = `Pipeline benchmark failed: ${error.message}`;
+    } finally {
+      painting?.dispose?.();
+      stress.disabled = pipeline.disabled = false;
+    }
+  };
+</script>
+</html>

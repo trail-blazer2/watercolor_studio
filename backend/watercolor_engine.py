@@ -22,8 +22,6 @@ from accent_strokes import create_accent_strokes_detailed
 
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 ASSETS_DIR = os.path.join(os.path.dirname(BACKEND_DIR), "assets")
-if not os.path.exists(ASSETS_DIR):
-    ASSETS_DIR = BACKEND_DIR
 
 
 def asset_path(filename: str) -> str:

@@ -1,0 +1,6 @@
+# Downloaded model weights are deployment artifacts, not source files.
+frontend/models/*.onnx
+__pycache__/
+*.py[cod]
+.painting-browser/
+org.chromium.Chromium.*/

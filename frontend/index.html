@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#faf8f4">
+  <meta name="description" content="Turn a photo into a watercolor, privately on your device.">
+  <title>Watercolor Studio</title>
+  <link rel="manifest" href="./manifest.json">
+  <link rel="icon" href="./assets/icon.svg">
+  <link rel="apple-touch-icon" href="./assets/icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./studio.css">
+  <script type="module" src="./js/main.js"></script>
+</head>
+<body>
+  <header>
+    <a class="brand" href="./">Watercolor <em>Studio</em></a>
+    <span class="privacy">Made here. Stays here.</span>
+    <div class="header-actions">
+      <button id="undo" title="Undo (Ctrl or ⌘ Z)" aria-label="Undo" disabled>↶</button>
+      <button id="redo" title="Redo (Ctrl or ⌘ Shift Z)" aria-label="Redo" disabled>↷</button>
+      <button id="export-top" class="gold" disabled>Export JPG</button>
+    </div>
+  </header>
+  <main>
+    <aside id="tools" class="sheet tools" aria-label="Painting tools">
+      <div class="sheet-title"><h2>Your tools</h2><button class="close-sheet" aria-label="Close tools">×</button></div>
+      <label class="button gold photo-button" for="photo">Choose a photo</label>
+      <input id="photo" type="file" accept="image/*" hidden>
+      <label class="button" for="camera">Take a photo</label>
+      <input id="camera" type="file" accept="image/*" capture="environment" hidden>
+      <p class="hint">Photos never leave your device. Models download once; the first visit needs internet.</p>
+      <div class="tool-grid" role="group" aria-label="Active tool">
+        <button data-tool="pan" aria-pressed="true">✥<span>Move</span></button>
+        <button data-tool="paint" aria-pressed="false">◒<span>Watercolor</span></button>
+        <button data-tool="detail" aria-pressed="false">✎<span>Detail</span></button>
+        <button data-tool="erase" aria-pressed="false">◌<span>Erase layer</span></button>
+        <button data-tool="mask-add" aria-pressed="false">⊕<span>Keep cutout</span></button>
+        <button data-tool="mask-erase" aria-pressed="false">⊖<span>Trim cutout</span></button>
+        <button data-tool="eyedropper" aria-pressed="false">⌾<span>Pick color</span></button>
+        <button id="fit">⤢<span>Fit painting</span></button>
+      </div>
+      <label>Brush tip<select id="tip"><option value="round_hard">Hard round</option><option value="airbrush">Soft airbrush</option><option value="specular">Specular highlight</option></select></label>
+      <label>Brush size <output id="brush-size-label">40</output><input id="brush-size" type="range" min="2" max="240" value="40"></label>
+      <label>Brush opacity<input id="brush-opacity" type="range" min="0.05" max="1" step="0.01" value="0.8"></label>
+      <label class="color-label">Paint color<input id="color" type="color" value="#ffffff"></label>
+      <p class="hint">One finger paints. Two fingers move and zoom. Double-tap to fit. Mask tools change the subject, not the paper.</p>
+    </aside>
+    <section id="workspace" aria-label="Painting canvas">
+      <div id="empty">
+        <span class="eyebrow">YOUR PHOTO, REIMAGINED</span>
+        <h1>A little water.<br>A little wonder.</h1>
+        <p>Create a layered animal portrait, then make it your own.</p>
+        <label for="photo" class="button gold">Start with a photo</label>
+        <p class="hint">Private · On-device · No account</p>
+      </div>
+      <canvas id="painting" aria-label="Your watercolor painting" hidden></canvas>
+      <div id="busy" role="status" aria-live="polite" hidden>
+        <strong id="stage">Loading model</strong><span id="elapsed"></span>
+        <progress id="progress" max="1" value="0"></progress>
+        <small id="stage-message"></small>
+      </div>
+      <div id="notice" role="status" aria-live="polite"></div>
+      <div class="canvas-caption"><span id="dimensions">1260 × 1782 · Animals</span><button id="fit-bottom">Fit</button></div>
+    </section>
+    <aside id="inspector" class="sheet inspector" aria-label="Layer inspector">
+      <div class="sheet-title"><h2>Make it yours</h2><button class="close-sheet" aria-label="Close inspector">×</button></div>
+      <section id="adjust-panel">
+        <h3 id="selected-name">Layer adjustments</h3>
+        <div id="adjustments"><p class="hint">Choose a photo to begin. Then select a layer to adjust it.</p></div>
+      </section>
+      <section id="layers-panel"><h3>The layers</h3><div id="layers"></div></section>
+      <section id="size-section" hidden><label>Print size<select id="size"></select></label></section>
+      <p class="hint">“approx” identifies an effect that differs from the Python original. This is a local preview, not a pixel-identical reproduction.</p>
+      <p id="model-status" class="hint" aria-live="polite">AI models are downloaded when you choose a photo.</p>
+    </aside>
+  </main>
+  <nav class="bottom-bar" aria-label="Studio navigation">
+    <button data-sheet="photo">Photo</button><button data-sheet="tools">Tools</button><button data-sheet="layers">Layers</button><button data-sheet="adjust">Adjust</button><button id="export-mobile" disabled>Export</button>
+  </nav>
+  <div id="backdrop" hidden></div>
+  <dialog id="export-dialog">
+    <h2>Your print is ready</h2><p>JPG · quality 95 · 300 dpi</p>
+    <a id="download" class="button gold" download="watercolor.jpg">Download JPG</a>
+    <button id="share" hidden>Share / Save to Files</button>
+    <button id="close-export">Back to painting</button>
+  </dialog>
+</body>
+</html>
