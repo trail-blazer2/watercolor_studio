@@ -53,6 +53,8 @@ offline. Model/runtime files are cached only after successful fetches. Available
 eviction, and private-browsing restrictions can prevent offline model reuse;
 caching failures must not prevent an otherwise successful online inference.
 The small model can retain its initial mask if the full model is unavailable.
+Export once while online as well if you want offline JPG export: this fetches and
+caches the separate HD brush assets.
 
 An install option depends on browser/platform support (the manifest supplies
 192/512-pixel PNG icons and an SVG icon). Clearing site data removes downloaded
@@ -69,20 +71,33 @@ verify that no photo upload occurs.
 node --experimental-default-type=module --test frontend/tests/*.test.mjs
 ```
 
+Open **http://localhost:8000/dev/regression.html** and click **Run browser
+regressions**. Expect eight PASS lines. These use a synthetic photo/mask and the
+real GPU compositor and JPG encoder, without model downloads. They cover bounded
+photo decoding, stamp orientation/alpha, deterministic rendering, layer-parameter
+history, paint/eraser history and resizing, mask history, tile consistency, and
+JPEG decoding. Add `?run` to run automatically.
+
+Document/history is connected to the mobile editor and GPU rendering. Mask
+rebuilds replay edits from the original mask and mark the result as already
+edited, so preview and export do not apply those edits a second time.
+
 ### Owner smoke test after deployment
 
-1. Open the deployed app online and upload a small photo. Verify initial
+1. Open **https://trail-blazer2.github.io/watercolor_studio/dev/regression.html**,
+   run the checks, and confirm eight PASS lines.
+2. Open the deployed app online and upload a small photo. Verify initial
    segmentation/painting completes, then allow the full-model upgrade to finish.
-2. Select a layer and change its opacity. Confirm the visible result updates.
-3. Try paint, detail, eraser, and mask-add/mask-erase strokes. Undo and redo each
+3. Select a layer and change its opacity. Confirm the visible result updates.
+4. Try paint, detail, eraser, and mask-add/mask-erase strokes. Undo and redo each
    operation; check that both the stroke and affected controls return correctly.
-4. Pan and zoom, then export a JPG. Open the downloaded file and compare its
+5. Pan and zoom, then export a JPG. Open the downloaded file and compare its
    placement, layers, and edits with the preview. Test share only on a browser
    that offers it.
-5. Reload once to ensure service-worker control, enable offline mode, and reload
+6. Reload once to ensure service-worker control, enable offline mode, and reload
    again. Upload a photo and confirm cached inference works. If storage caching
    was denied, restore the network; online inference should still work.
-6. Check the network panel: photo bytes must not be posted to any endpoint.
+7. Check the network panel: photo bytes must not be posted to any endpoint.
    Repeat the editing/export checks on a target phone; desktop success does not
    establish mobile performance or memory limits.
 
@@ -95,6 +110,24 @@ node --experimental-default-type=module --test frontend/tests/*.test.mjs
   Python animals-preset reference, then generate a local browser export for
   side-by-side inspection. Match input, seed, preset, dimensions, and placement
   when assessing differences.
+  Both developer pages use the editor's 2048-pixel photo decode limit.
+
+### Results from this continuation (2026-10-16)
+
+- All **40 Node tests** and **eight browser regressions** passed. The eight
+  browser checks also passed offline after the service worker cached the app.
+- Headless Chromium 155 on Linux, using **SwiftShader software WebGL2**, drew
+  5,000 stamps in **4.2 ms** and 20,000 in **4.4 ms** (submission plus finish;
+  generation took 6.3/14.9 ms, setup 14.2 ms). These are sandbox measurements,
+  **not phone/GPU performance claims**.
+- Mobile-sized (390 × 844) editor startup, cached offline shell, and recovery
+  after an inference-load error passed. Comparison input validation and reference
+  preview passed.
+- Official model downloads succeeded, but **`cdn.jsdelivr.net` does not resolve
+  in this sandbox**. The pipeline benchmark, comparison generation, and editor
+  upload correctly reported the unavailable ONNX Runtime and recovered.
+  **Real browser inference, offline inference, full comparison generation,
+  Python-reference fidelity, and target-phone timings remain unverified.**
 
 ## Scope and known limitations
 
@@ -103,9 +136,11 @@ Watercolor wash/diffusion, interior texture, edge bleed, stamp distribution, and
 paper/compositing are approximations; stochastic marks may differ. In particular:
 
 - **Oil detail** uses Canvas2D contrast/saturation adjustments, not Python's oil
-  filtering and sharpening algorithms.
+  filtering and sharpening algorithms. Faithful structure-tensor/flow filtering
+  and high-pass blending are deferred; unsupported flow controls are not shown.
 - **Accent strokes** use contrast/color-thresholded edge patches, capped at 180
-  candidates, rather than Python's adaptive interest/weight maps.
+  candidates, rather than Python's adaptive interest/weight maps, image-statistic
+  thresholds, and spatial weight balancing. A faithful port is deferred.
 - Browser image resampling differs from Pillow Lanczos. Guided mask refinement
   can be skipped when float render targets or the GPU memory budget are
   unavailable; the mask without guided refinement is retained and the limitation
