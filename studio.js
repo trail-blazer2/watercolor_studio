@@ -188,6 +188,9 @@ function bindUIEvents() {
     STATE.uploadedFile = file;
     const url = URL.createObjectURL(file);
     STATE.originalImg = await loadImage(url);
+    window.dispatchEvent(new CustomEvent("watercolor:source", {
+      detail: { photo: file, preset: presetSelect.value },
+    }));
     STATE.maskCanvas = null; // Reset custom mask on new photo
     generateBtn.disabled = false;
     runModalGeneration();
@@ -369,6 +372,10 @@ async function initializeStudioFromPayload(payload) {
   const maskImg = await loadImage(payload.mask_png);
   STATE.maskCanvas = createCanvas(maskImg.width, maskImg.height);
   STATE.maskCanvas.getContext("2d").drawImage(maskImg, 0, 0);
+  const maskBlob = await new Promise((resolve) => STATE.maskCanvas.toBlob(resolve, "image/png"));
+  window.dispatchEvent(new CustomEvent("watercolor:generated", {
+    detail: { payload, mask: maskBlob },
+  }));
 
   // Preload all server-rendered layer PNGs in parallel
   const rawImgs = {};
@@ -1082,6 +1089,7 @@ function setActiveTool(tool) {
 
 function setupCanvasInteractions() {
   let isPickingColor = false;
+  let vectorStroke = null;
 
   document.getElementById("eyedropperBtn").addEventListener("click", () => {
     isPickingColor = true;
@@ -1094,7 +1102,7 @@ function setupCanvasInteractions() {
     setZoom(STATE.zoom * factor, e.clientX, e.clientY);
   }, { passive: false });
 
-  viewport.addEventListener("mousedown", (e) => {
+  viewport.addEventListener("pointerdown", (e) => {
     if (!STATE.payload) return;
 
     if (isPickingColor) {
@@ -1108,11 +1116,24 @@ function setupCanvasInteractions() {
     STATE.lastMouse = { x: e.clientX, y: e.clientY };
 
     if (STATE.activeTool === "brush" || STATE.activeTool === "eraser" || STATE.activeTool === "mask") {
+      vectorStroke = {
+        space: "canvas",
+        tool: STATE.activeTool === "mask"
+          ? (STATE.maskModePaintKeep ? "mask-keep" : "mask-remove")
+          : STATE.activeTool,
+        tip: document.getElementById("manualBrushTip").value,
+        size: Number(document.getElementById("manualBrushSize").value),
+        color: document.getElementById("manualBrushColor").value,
+        opacity: Number(document.getElementById("manualBrushOpacity").value) / 100,
+        pressure: e.pressure || 1,
+        layerId: STATE.selectedLayerId,
+        points: [],
+      };
       applyManualStrokeAtMouse(e);
     }
   });
 
-  window.addEventListener("mousemove", (e) => {
+  window.addEventListener("pointermove", (e) => {
     updateCursorPosition(e);
     if (!STATE.isDragging || !STATE.payload) return;
 
@@ -1127,8 +1148,12 @@ function setupCanvasInteractions() {
     }
   });
 
-  window.addEventListener("mouseup", () => {
+  window.addEventListener("pointerup", () => {
     STATE.isDragging = false;
+    if (vectorStroke?.points.length) {
+      window.dispatchEvent(new CustomEvent("watercolor:vector-edit", { detail: vectorStroke }));
+    }
+    vectorStroke = null;
   });
 }
 
@@ -1145,6 +1170,14 @@ function applyManualStrokeAtMouse(e) {
   const opacity = Number(document.getElementById("manualBrushOpacity").value) / 100;
   const colorHex = document.getElementById("manualBrushColor").value;
   const tip = document.getElementById("manualBrushTip").value;
+  if (vectorStroke) {
+    vectorStroke.points.push({
+      x: x / displayCanvas.width,
+      y: y / displayCanvas.height,
+      pressure: e.pressure || vectorStroke.pressure,
+    });
+    vectorStroke.pressure = e.pressure || vectorStroke.pressure;
+  }
 
   // Cutout Mask Editing Mode
   if (STATE.activeTool === "mask" && STATE.maskCanvas) {
