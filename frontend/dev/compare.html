@@ -12,6 +12,7 @@
 </style>
 <h1>Animals pipeline: side-by-side reference</h1>
 <p><a href="../">Studio</a> · <a href="benchmark.html">Benchmarks</a></p>
+<p><a href="regression.html">Browser regression checks (no models required)</a></p>
 <p>Select the original photo and an independently generated Python reference using
   the same photo, preset, seed, and dimensions. Nothing is uploaded. This is a
   visual comparison tool, not a claim of pixel parity. Stamps, edge sampling,
@@ -57,11 +58,12 @@
     let photo, painting;
     try {
       const { WatercolorDocument } = await import("../js/document.js");
+      const { decodePhoto } = await import("../js/editor.js");
       const { segmentPhoto } = await import("../js/pipeline/segment.js");
       const { createPainting } = await import("../js/pipeline/paint.js");
       const { exportJPG } = await import("../js/pipeline/export.js");
       const start = performance.now();
-      photo = await createImageBitmap(file);
+      photo = await decodePhoto(file);
       status.textContent = "Segmenting locally…";
       let segmenting = true;
       let upgradeReady;
@@ -97,7 +99,6 @@
       status.textContent = `Comparison failed: ${error.message}`;
     } finally {
       painting?.dispose?.();
-      photo?.close();
       button.disabled = false;
     }
   };

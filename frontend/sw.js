@@ -1,4 +1,4 @@
-const VERSION = "watercolor-v1";
+const VERSION = "watercolor-v2";
 const SHELL_CACHE = `${VERSION}-shell`;
 const ASSET_CACHE = `${VERSION}-assets`;
 const scope = new URL("./", self.location.href);
@@ -30,6 +30,7 @@ const SHELL = [
   "js/gpu/shaders/stamp.js",
   "dev/benchmark.html",
   "dev/compare.html",
+  "dev/regression.html",
   ...[
     "bgbrush", "brush2", "colordrop", "darkbrush", "darkdots", "largebrush",
     "papertexture", "sharpbrush", "square", "watercolor_texture",

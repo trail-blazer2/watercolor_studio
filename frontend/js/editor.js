@@ -1,3 +1,23 @@
+export async function decodePhoto(file) {
+  let image;
+  try { image = await createImageBitmap(file, { imageOrientation: "from-image" }); }
+  catch {
+    const url = URL.createObjectURL(file);
+    try {
+      image = new Image();
+      image.src = url;
+      await image.decode();
+    } finally { URL.revokeObjectURL(url); }
+  }
+  const scale = Math.min(1, 2048 / Math.max(image.width, image.height));
+  const source = document.createElement("canvas");
+  source.width = Math.max(1, Math.round(image.width * scale));
+  source.height = Math.max(1, Math.round(image.height * scale));
+  source.getContext("2d").drawImage(image, 0, 0, source.width, source.height);
+  image.close?.();
+  return source;
+}
+
 export function subjectPoint(point, bounds) {
   return { x: (point.x - bounds.x) / bounds.width, y: (point.y - bounds.y) / bounds.height,
     pressure: point.pressure };
@@ -14,6 +34,11 @@ export function replayParameters(document) {
 export function maskDiameter(edit, width, height, bounds) {
   return edit.sourceSize !== undefined ? edit.sourceSize * Math.max(width, height)
     : edit.size * Math.max(width / bounds.width, height / bounds.height);
+}
+
+export function applyMaskEdits(document, base, bounds) {
+  document.mask = replayMask(base, document.edits, bounds);
+  document.maskEditsApplied = true;
 }
 
 export function replayMask(base, edits, bounds) {

@@ -1,6 +1,6 @@
 import { WatercolorDocument, ENABLE_SIZE_PICKER, OUTPUT_SIZES } from "./document.js";
 import { EditHistory } from "./state.js";
-import { maskDiameter, replayMask, replayParameters, subjectPoint } from "./editor.js";
+import { applyMaskEdits, decodePhoto, maskDiameter, replayParameters, subjectPoint } from "./editor.js";
 import { segmentPhoto } from "./pipeline/segment.js";
 import { createPainting } from "./pipeline/paint.js";
 import { exportJPG } from "./pipeline/export.js";
@@ -86,25 +86,6 @@ async function rebuild() {
   if (studio.frame) cancelAnimationFrame(studio.frame);
   studio.frame = 0;
   await render();
-}
-async function decodePhoto(file) {
-  let image;
-  try { image = await createImageBitmap(file, { imageOrientation: "from-image" }); }
-  catch {
-    const url = URL.createObjectURL(file);
-    try {
-      image = new Image();
-      image.src = url;
-      await image.decode();
-    } finally { URL.revokeObjectURL(url); }
-  }
-  const scale = Math.min(1, 2048 / Math.max(image.width, image.height));
-  const source = document.createElement("canvas");
-  source.width = Math.max(1, Math.round(image.width * scale));
-  source.height = Math.max(1, Math.round(image.height * scale));
-  source.getContext("2d").drawImage(image, 0, 0, source.width, source.height);
-  image.close?.();
-  return source;
 }
 async function upload(file) {
   if (!file || studio.busy) return;
@@ -254,7 +235,6 @@ function renderAdjustments() {
     panel.append(label);
   }
   if (layer.id === "oil_paint") controls.push(
-    ["flowLength", "Flow length", 0, 30, 1, 8], ["flowThickness", "Flow thickness", 0, 10, 0.5, 2],
     ["detail", "Detail", 0, 2, 0.05, 1], ["sharpening", "Sharpening", 0, 3, 0.05, 1]);
   if (layer.id === "subject") controls.push(
     ["ccStrength", "Color correction strength", 0, 1, 0.01, 1],
@@ -265,7 +245,7 @@ function renderAdjustments() {
 }
 async function updateMask() {
   if (!studio.baseMask || !studio.painting) return;
-  studio.doc.mask = replayMask(studio.baseMask, studio.doc.edits,
+  applyMaskEdits(studio.doc, studio.baseMask,
     studio.painting.imageBounds || studio.painting.subjectBounds);
   await rebuild();
 }
