@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Watercolor reference comparison</title>
+<style>
+  body { font: 16px system-ui; margin: 2rem auto; padding: 0 1rem; max-width: 1200px; background: #f4f0e8; color: #243b36; }
+  input, button { font: inherit; margin: .4rem; padding: .5rem; max-width: 90%; }
+  .pair { display: grid; grid-template-columns: repeat(auto-fit,minmax(260px,1fr)); gap: 1rem; }
+  figure { margin: 0; } img { width: 100%; background: white; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
+<h1>Animals pipeline: side-by-side reference</h1>
+<p><a href="../">Studio</a> · <a href="benchmark.html">Benchmarks</a></p>
+<p>Select the original photo and an independently generated Python reference using
+  the same photo, preset, seed, and dimensions. Nothing is uploaded. This is a
+  visual comparison tool, not a claim of pixel parity. Stamps, edge sampling,
+  watercolor diffusion, and compositing may approximate the Python renderer.</p>
+<p>Browser output uses the default 1260 × 1782 reference canvas and animals-preset
+  seeds. Prepare your Python reference with those settings.</p>
+<label>Original photo <input id="photo" type="file" accept="image/*"></label>
+<label>Python reference <input id="reference" type="file" accept="image/*"></label>
+<p><label><input id="full-model" type="checkbox" checked>Wait for the full u2net mask
+  (first download is approximately 176 MB; falls back to the initial mask if unavailable)</label></p>
+<button id="run">Segment, paint, and export locally</button>
+<pre id="status" role="status" aria-live="polite">Choose both images. Target-device performance and reference fidelity require manual review.</pre>
+<div class="pair">
+  <figure><figcaption>Browser export</figcaption><img id="browser" alt="Browser painting will appear here" hidden></figure>
+  <figure><figcaption>Python reference (your file)</figcaption><img id="python" alt="Python reference will appear here" hidden></figure>
+</div>
+<script type="module">
+  const status = document.querySelector("#status");
+  const button = document.querySelector("#run");
+  const urls = new Map();
+  function show(id, blob) {
+    if (urls.has(id)) URL.revokeObjectURL(urls.get(id));
+    const url = URL.createObjectURL(blob);
+    urls.set(id, url);
+    const image = document.createElement("img");
+    image.id = id;
+    image.alt = id === "browser" ? "Browser watercolor export" : "Uploaded Python reference";
+    image.src = url;
+    document.getElementById(id).replaceWith(image);
+  }
+  document.querySelector("#reference").onchange = (event) => {
+    const file = event.target.files[0];
+    if (file) show("python", file);
+  };
+  button.onclick = async () => {
+    const file = document.querySelector("#photo").files[0];
+    if (!file || !document.querySelector("#reference").files[0]) {
+      status.textContent = "Choose the original photo and the Python reference first.";
+      return;
+    }
+    button.disabled = true;
+    status.textContent = "Loading local model and renderer…";
+    let photo, painting;
+    try {
+      const { WatercolorDocument } = await import("../js/document.js");
+      const { segmentPhoto } = await import("../js/pipeline/segment.js");
+      const { createPainting } = await import("../js/pipeline/paint.js");
+      const { exportJPG } = await import("../js/pipeline/export.js");
+      const start = performance.now();
+      photo = await createImageBitmap(file);
+      status.textContent = "Segmenting locally…";
+      let segmenting = true;
+      let upgradeReady;
+      const upgrade = new Promise((resolve) => { upgradeReady = resolve; });
+      const initialMask = await segmentPhoto(photo, {
+        onUpgrade: (mask) => upgradeReady(mask),
+        onProgress: (value) => {
+          if (segmenting) status.textContent = value.message || value.stage;
+          if (value.stage === "upgrade-error") upgradeReady(null);
+        },
+      });
+      const fullMask = document.querySelector("#full-model").checked ? await upgrade : null;
+      const mask = fullMask || initialMask;
+      segmenting = false;
+      const doc = new WatercolorDocument({ photo, mask, preset: "animals" });
+      status.textContent = "Painting locally…";
+      painting = await createPainting(doc, { assetsQuality: "hd" });
+      status.textContent = "Exporting…";
+      const blob = await exportJPG({
+        document: doc,
+        renderTile: async ({ width, height, x, y, tileWidth, tileHeight, margin }) => {
+          const canvas = document.createElement("canvas");
+          await painting.render({
+            canvas, width: tileWidth + 2 * margin, height: tileHeight + 2 * margin,
+            x: x - margin, y: y - margin, fullWidth: width, fullHeight: height,
+          });
+          return canvas;
+        },
+      });
+      show("browser", blob);
+      status.textContent = `Browser segmentation + painting + export: ${(performance.now() - start).toFixed(1)} ms.\nMask: ${fullMask ? "full u2net" : "initial u2netp"}. Compare subject boundaries, wash, interior texture, edge bleed, and placement visually. Different random sequences can change individual marks.`;
+    } catch (error) {
+      status.textContent = `Comparison failed: ${error.message}`;
+    } finally {
+      painting?.dispose?.();
+      photo?.close();
+      button.disabled = false;
+    }
+  };
+  window.addEventListener("pagehide", () => {
+    for (const url of urls.values()) URL.revokeObjectURL(url);
+  });
+</script>
+</html>
